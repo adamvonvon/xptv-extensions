@@ -1,55 +1,10 @@
-const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36';
+const UA = 'Dart/3.3 (dart:io)';
 
-// 切换到全球稳定源
 let appConfig = {
     ver: 20251115,
-    title: 'gayporn',
+    title: 'GayPorn',
     site: 'https://vod.infiniteapi.com',
 };
-
-function buildXML(tyList = [], videoList = []) {
-    let xml = '<?xml version="1.0" encoding="utf-8"?><rss version="5.0">';
-    
-    if (tyList.length > 0) {
-        xml += '<list page="1" pagecount="1" pagesize="' + tyList.length + '" total="' + tyList.length + '">';
-        tyList.forEach(ty => {
-            xml += `<ty id="${ty.id}">${escapeXml(ty.name)}</ty>`;
-        });
-        xml += '</list>';
-    }
-    
-    if (videoList.length > 0) {
-        xml += '<list page="' + (videoList[0].page || 1) + '" pagecount="999" pagesize="' + videoList.length + '" total="9999">';
-        videoList.forEach(v => {
-            xml += `<video>
-                <id>${escapeXml(v.id)}</id>
-                <name><![CDATA[${escapeXml(v.name)}]]></name>
-                <pic>${escapeXml(v.pic)}</pic>
-                <last>${escapeXml(v.last || '')}</last>
-                <note>${escapeXml(v.note || '')}</note>
-                <dt>${escapeXml(v.dt || 'MP4')}</dt>
-            </video>`;
-        });
-        xml += '</list>';
-    } else {
-        // 兜底：空列表时显示提示
-        xml += '<list page="1" pagecount="1" pagesize="0" total="0"><video><name>加载中... 请稍后</name></video></list>';
-    }
-    
-    xml += '</rss>';
-    return xml;
-}
-
-function escapeXml(str) {
-    return (str || '').toString().replace(/[<>&'"]/g, c => ({
-        '<': '&lt;', '>': '&gt;', '&': '&amp;', "'": '&apos;', '"': '&quot;'
-    })[c]);
-}
-
-// 延迟函数（防反爬）
-function delay(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
-}
 
 async function getConfig() {
     let config = appConfig;
@@ -64,95 +19,85 @@ async function getConfig() {
 
 async function getTabs(token) {
     try {
-        await delay(500); // 随机延迟
         let list = [];
-        // 伪造 Gay 分类（1~20页，减少加载压力）
-        for (let i = 1; i <= 20; i++) {
+        // 伪造分类（Gay 1~30页），模拟 infiniteapi 的 <ty id="x">名称</ty>
+        for (let i = 1; i <= 30; i++) {
             list.push({
-                name: `Gay 同志 第${i}页`,
+                name: `Gay 第${i}页`,
                 ext: {
-                    url: `https://www.pornhub.com/gay?page=${i}`,
+                    url: `https://cn.pornhub.com/gay?page=${i}`,
                     token: token,
                     page: i
                 },
             });
         }
         return list;
-    } catch (e) {
-        $print(e);
-        return [{ name: '默认 Gay', ext: { url: 'https://www.pornhub.com/gay?page=1', token: token } }];
+    } catch (error) {
+        $print('getTabs error: ' + error);
+        return [];
     }
 }
 
 async function getCards(ext) {
     try {
         ext = argsify(ext);
+        let cards = [];
         let url = ext.url;
         let token = ext.token;
-        await delay(Math.random() * 1000 + 500); // 0.5~1.5s 延迟
-
-        const { data } = await $fetch.get(url, {
-            headers: { 
-                'User-Agent': UA,
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-                'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8'
-            },
-        });
-
-        const doc = new DOMParser().parseFromString(data, 'text/html');
-        const items = doc.querySelectorAll('.pcVideoListItem a, .videoBoxThumb a, a[data-mediabook]');
-        let videos = [];
-
-        items.forEach((a, index) => {
-            if (index > 23) return; // 限制24条
-            if (!a.href || !a.href.includes('viewkey=')) return;
-
-            const viewkey = a.href.match(/viewkey=([^&]+)/)?.[1];
-            const title = a.getAttribute('title') || a.querySelector('img')?.alt || `Gay 视频 ${index + 1}`;
-            const img = a.querySelector('img');
-            const pic = img?.getAttribute('data-mediabook') || img?.getAttribute('data-src') || img?.src || '';
-            const duration = a.querySelector('.duration, .video-duration')?.textContent?.trim() || '';
-
-            if (viewkey) {
-                videos.push({
-                    id: viewkey,
-                    name: title,
-                    pic: pic.startsWith('http') ? pic : 'https:' + pic,
-                    last: duration,
-                    note: 'HD Gay',
-                    dt: 'Pornhub',
-                    page: ext.page || 1
-                });
-            }
-        });
-
-        // 重试机制：如果少于5条，尝试重抓
-        if (videos.length < 5) {
-            $print('视频少，重试...');
-            await delay(1000);
-            return getCards(ext); // 递归重试（最多3次，XPTV 防循环）
-        }
-
-        return buildXML([], videos);
-    } catch (e) {
-        $print('getCards error: ' + e);
-        return buildXML([], []);
-    }
-}
-
-async function getTracks(ext) {
-    try {
-        ext = argsify(ext);
-        let url = `https://www.pornhub.com/view_video.php?viewkey=${ext.vod_id || ext.url.split('viewkey=')[1]}`;
-        await delay(800);
 
         const { data } = await $fetch.get(url, {
             headers: { 'User-Agent': UA }
         });
 
         const doc = new DOMParser().parseFromString(data, 'text/html');
-        const script = Array.from(doc.scripts).find(s => s.textContent && s.textContent.includes('mediaDefinitions'));
-        let playUrls = [];
+        const items = doc.querySelectorAll('a[data-title]');
+        let count = 0;
+
+        items.forEach(a => {
+            if (count >= 24) return; // 每页最多24条
+            if (!a.href.includes('viewkey=')) return;
+
+            const viewkey = a.href.match(/viewkey=([^&]+)/)?.[1];
+            const title = a.getAttribute('title') || 'Gay Video';
+            const img = a.querySelector('img');
+            const pic = img?.getAttribute('data-mediabook') || img?.getAttribute('data-src') || img?.src || '';
+            const duration = a.querySelector('.duration')?.textContent?.trim() || '';
+
+            if (viewkey) {
+                cards.push({
+                    vod_id: viewkey,
+                    vod_name: title,
+                    vod_pic: pic.startsWith('http') ? pic : 'https:' + pic,
+                    vod_remarks: duration,
+                    ext: {
+                        url: a.href,
+                        token: token
+                    },
+                });
+                count++;
+            }
+        });
+
+        return jsonify({ list: cards });
+    } catch (error) {
+        $print('getCards error: ' + error);
+        return jsonify({ list: [] });
+    }
+}
+
+async function getTracks(ext) {
+    try {
+        ext = argsify(ext);
+        let tracks = [];
+        let url = ext.url;
+        let token = ext.token;
+
+        const { data } = await $fetch.get(url, {
+            headers: { 'User-Agent': UA }
+        });
+
+        const doc = new DOMParser().parseFromString(data, 'text/html');
+        const script = Array.from(doc.scripts).find(s => s.textContent.includes('mediaDefinitions'));
 
         if (script) {
             const match = script.textContent.match(/mediaDefinitions\s*=\s*(\[[\s\S]*?\]);/);
@@ -160,49 +105,54 @@ async function getTracks(ext) {
                 try {
                     const media = JSON.parse(match[1]);
                     const sorted = media
-                        .filter(m => m.videoUrl && m.quality)
-                        .sort((a, b) => (b.quality - a.quality));
+                        .filter(m => m.videoUrl)
+                        .sort((a, b) => (b.quality || 0) - (a.quality || 0))
+                        .slice(0, 3); // 取前3个清晰度
 
-                    sorted.slice(0, 3).forEach(m => { // 只取前3个清晰度
-                        playUrls.push(`${m.quality}p$$${m.videoUrl}`);
+                    sorted.forEach(m => {
+                        tracks.push({
+                            name: `${m.quality}p`,
+                            pan: '',
+                            ext: { url: m.videoUrl },
+                        });
                     });
                 } catch (e) {
-                    $print('JSON 解析失败: ' + e);
+                    $print('mediaDefinitions parse error: ' + e);
                 }
             }
         }
 
-        // m3u8 兜底
-        if (playUrls.length === 0) {
-            const m3u8Match = data.match(/"defaultVideoUrl":"([^"]+\.m3u8[^"]*)"/);
-            if (m3u8Match) {
-                playUrls.push(`HLS 720p$$${m3u8Match[1].replace(/\\/g, '')}`);
+        // 兜底 m3u8
+        if (tracks.length === 0) {
+            const m3u8 = data.match(/"defaultVideoUrl":"([^"]+\.m3u8[^"]*)"/);
+            if (m3u8) {
+                tracks.push({
+                    name: 'HLS 720p',
+                    pan: '',
+                    ext: { url: m3u8[1].replace(/\\/g, '') },
+                });
             }
         }
 
-        // 构造 XML
-        let xml = '<?xml version="1.0" encoding="utf-8"?><rss version="5.0"><list>';
-        playUrls.forEach(urlStr => {
-            const [title, playUrl] = urlStr.split('$$');
-            xml += `<dd flag=""><![CDATA[${escapeXml(title)}$$${escapeXml(playUrl)}]]></dd>`;
+        return jsonify({
+            list: [{
+                title: '在线',
+                tracks: tracks.length > 0 ? tracks : [{ name: '解析失败', pan: '', ext: { url: '' } }]
+            }]
         });
-        if (playUrls.length === 0) {
-            xml += '<dd flag=""><![CDATA[加载失败，请重试]]></dd>';
-        }
-        xml += '</list></rss>';
-
-        return xml;
-    } catch (e) {
-        $print('getTracks error: ' + e);
-        return '<?xml version="1.0" encoding="utf-8"?><rss version="5.0"><list><dd flag=""><![CDATA[解析失败]]></dd></list></rss>';
+    } catch (error) {
+        $print('getTracks error: ' + error);
+        return jsonify({ list: [] });
     }
 }
 
 async function getPlayinfo(ext) {
     try {
         ext = argsify(ext);
-        return jsonify({ urls: [ext.url] });
-    } catch (e) {
+        const url = ext.url;
+        return jsonify({ urls: [url] });
+    } catch (error) {
+        $print('getPlayinfo error: ' + error);
         return jsonify({ urls: [] });
     }
 }
@@ -210,42 +160,42 @@ async function getPlayinfo(ext) {
 async function search(ext) {
     try {
         ext = argsify(ext);
+        let cards = [];
+        let token = argsify($config_str).token;
         let text = encodeURIComponent(ext.text);
         let page = ext.page || 1;
-        if (page >= 2) return buildXML();
+        if (page >= 2) return jsonify({ list: [] });
 
-        const url = `https://www.pornhub.com/video/search?search=${text}&gay=1&page=1`;
-        await delay(600);
-
-        const { data } = await $fetch.get(url, { headers: { 'User-Agent': UA } });
+        const url = `https://cn.pornhub.com/video/search?search=${text}&gay=1&page=1`;
+        const { data } = await $fetch.get(url, {
+            headers: { 'User-Agent': UA }
+        });
 
         const doc = new DOMParser().parseFromString(data, 'text/html');
-        const items = doc.querySelectorAll('a[data-mediabook]');
-        let videos = [];
+        const items = doc.querySelectorAll('a[data-title]');
 
-        items.slice(0, 20).forEach((a, index) => {
+        items.forEach(a => {
             if (!a.href.includes('viewkey=')) return;
             const viewkey = a.href.match(/viewkey=([^&]+)/)?.[1];
-            const title = a.getAttribute('title') || `搜索结果 ${index + 1}`;
+            const title = a.getAttribute('title') || '';
             const img = a.querySelector('img');
             const pic = img?.getAttribute('data-mediabook') || img?.src || '';
             const duration = a.querySelector('.duration')?.textContent?.trim() || '';
 
             if (viewkey) {
-                videos.push({
-                    id: viewkey,
-                    name: title,
-                    pic: pic.startsWith('http') ? pic : 'https:' + pic,
-                    last: duration,
-                    note: 'Gay 搜索',
-                    dt: 'Pornhub'
+                cards.push({
+                    vod_id: viewkey,
+                    vod_name: title,
+                    vod_pic: pic.startsWith('http') ? pic : 'https:' + pic,
+                    vod_remarks: duration,
+                    ext: { url: a.href, token: token },
                 });
             }
         });
 
-        return buildXML([], videos);
-    } catch (e) {
-        $print('search error: ' + e);
-        return buildXML([], []);
+        return jsonify({ list: cards });
+    } catch (error) {
+        $print('search error: ' + error);
+        return jsonify({ list: [] });
     }
 }
