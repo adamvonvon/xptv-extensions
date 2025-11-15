@@ -1,8 +1,8 @@
 const UA = 'Dart/3.3'
 
 let appConfig = {
-    ver: 20251115,
-    title: 'GayPorn',
+    ver: 20250507,
+    title: 'Pornhub',
     site: 'https://vod.infiniteapi.com',
 }
 
@@ -10,7 +10,7 @@ async function getConfig() {
     let config = appConfig
     let token = argsify($config_str).token
     if (!token) {
-        $utils.toastInfo('请填入 infiniteapi token')
+        $utils.toastInfo('one為biu提供的付費源，請填入token再使用')
         return
     }
     config.tabs = await getTabs(token)
@@ -20,16 +20,32 @@ async function getConfig() {
 async function getTabs(token) {
     try {
         let list = []
-        // 伪造分类：Gay 第1页 ~ 第20页（模仿 <ty id="1">Gay 第1页</ty>）
-        for (let i = 1; i <= 20; i++) {
-            list.push({
-                name: `Gay 第${i}页`,
-                ext: {
-                    url: `${appConfig.site}/${token}/gayporn?t=${i}&ac=videolist`,
-                    token: `${token}`,
-                },
-            })
+        let url = appConfig.site + `/${token}/ph_gay`
+
+        const { data } = await $fetch.get(url, {
+            headers: {
+                'User-Agent': UA,
+            },
+        })
+        
+        // 使用字符串处理方式解析 XML
+        const tyMatches = data.match(/<ty id="(.*?)">(.*?)<\/ty>/g) || []
+        
+        for (const tyXml of tyMatches) {
+            const idMatch = tyXml.match(/id="(.*?)"/)
+            const titleMatch = tyXml.match(/>([^<]+)</)
+            
+            if (idMatch && titleMatch) {
+                list.push({
+                    name: titleMatch[1],
+                    ext: {
+                        url: `${appConfig.site}/${token}/ph_gay?t=${idMatch[1]}&ac=videolist`,
+                        token: `${token}`,
+                    },
+                })
+            }
         }
+
         return list
     } catch (error) {
         $print(error)
@@ -45,39 +61,35 @@ async function getCards(ext) {
         url = `${url}&pg=${page}`
         let token = ext.token
 
-        // 真实抓取 cn.pornhub.com/gay
-        const realUrl = `https://cn.pornhub.com/gay?page=${page}`
-        const { data } = await $fetch.get(realUrl, {
-            headers: { 'User-Agent': UA },
+        const { data } = await $fetch.get(url, {
+            headers: {
+                'User-Agent': UA,
+            },
         })
 
-        const doc = new DOMParser().parseFromString(data, 'text/html')
-        const items = doc.querySelectorAll('a[data-title]')
+        // 使用字符串处理方式解析 XML
+        const videoMatches = data.match(/<video>([\s\S]*?)<\/video>/g) || []
+        
+        for (const videoXml of videoMatches) {
+            const nameMatch = videoXml.match(/<name><!\[CDATA\[(.*?)\]\]><\/name>/)
+            const picMatch = videoXml.match(/<pic>(.*?)<\/pic>/)
+            const idMatch = videoXml.match(/<id>(.*?)<\/id>/)
+            
+            cards.push({
+                vod_id: idMatch ? idMatch[1] : "",
+                vod_name: nameMatch ? nameMatch[1] : "",
+                vod_pic: picMatch ? picMatch[1] : "",
+                ext: {
+                    url: `${appConfig.site}/${token}/ph_gay?ids=${idMatch[1]}`,
+                },
+            })
+        }
 
-        items.forEach(a => {
-            if (!a.href.includes('viewkey=')) return
-            const viewkey = a.href.match(/viewkey=([^&]+)/)?.[1]
-            const title = a.getAttribute('title') || 'Gay Video'
-            const img = a.querySelector('img')
-            const pic = img?.getAttribute('data-mediabook') || img?.getAttribute('data-src') || img?.src || ''
-            const duration = a.querySelector('.duration')?.textContent?.trim() || ''
-
-            if (viewkey) {
-                cards.push({
-                    vod_id: viewkey,
-                    vod_name: title,
-                    vod_pic: pic.startsWith('http') ? pic : 'https:' + pic,
-                    ext: {
-                        url: `${appConfig.site}/${token}/gayporn?ids=${viewkey}`,
-                    },
-                })
-            }
+        return jsonify({
+            list: cards,
         })
-
-        return jsonify({ list: cards })
     } catch (error) {
         $print(error)
-        return jsonify({ list: [] })
     }
 }
 
@@ -87,10 +99,12 @@ async function getTracks(ext) {
         let tracks = []
         let url = ext.url
         const { data } = await $fetch.get(url, {
-            headers: { 'User-Agent': UA },
+            headers: {
+                'User-Agent': UA,
+            },
         })
 
-        // 使用字符串处理方式解析 XML（完全模仿参考）
+        // 使用字符串处理方式解析 XML
         const ddMatches = data.match(/<dd flag="">\s*<!\[CDATA\[(.*?)\]\]>\s*<\/dd>/g) || []
         
         for (const ddXml of ddMatches) {
@@ -117,7 +131,6 @@ async function getTracks(ext) {
         })
     } catch (error) {
         $print(error)
-        return jsonify({ list: [] })
     }
 }
 
@@ -128,51 +141,5 @@ async function getPlayinfo(ext) {
         return jsonify({ urls: [url] })
     } catch (error) {
         $print(error)
-        return jsonify({ urls: [] })
-    }
-}
-
-// 搜索功能（模仿参考）
-async function search(ext) {
-    try {
-        ext = argsify(ext)
-        let cards = []
-        let token = argsify($config_str).token
-        let text = encodeURIComponent(ext.text)
-        let page = ext.page || 1
-        if (page >= 2) return jsonify({ list: [] })
-
-        const realUrl = `https://cn.pornhub.com/video/search?search=${text}&gay=1&page=1`
-        const { data } = await $fetch.get(realUrl, {
-            headers: { 'User-Agent': UA },
-        })
-
-        const doc = new DOMParser().parseFromString(data, 'text/html')
-        const items = doc.querySelectorAll('a[data-title]')
-
-        items.forEach(a => {
-            if (!a.href.includes('viewkey=')) return
-            const viewkey = a.href.match(/viewkey=([^&]+)/)?.[1]
-            const title = a.getAttribute('title') || ''
-            const img = a.querySelector('img')
-            const pic = img?.getAttribute('data-mediabook') || img?.src || ''
-            const duration = a.querySelector('.duration')?.textContent?.trim() || ''
-
-            if (viewkey) {
-                cards.push({
-                    vod_id: viewkey,
-                    vod_name: title,
-                    vod_pic: pic.startsWith('http') ? pic : 'https:' + pic,
-                    ext: {
-                        url: `${appConfig.site}/${token}/gayporn?ids=${viewkey}`,
-                    },
-                })
-            }
-        })
-
-        return jsonify({ list: cards })
-    } catch (error) {
-        $print(error)
-        return jsonify({ list: [] })
     }
 }
