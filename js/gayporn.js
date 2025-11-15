@@ -20,20 +20,18 @@ async function getConfig() {
 async function getTabs(token) {
     try {
         let list = [];
-        // 伪造分类（Gay 1~30页），模拟 infiniteapi 的 <ty id="x">名称</ty>
-        for (let i = 1; i <= 30; i++) {
+        for (let i = 1; i <= 20; i++) {
             list.push({
                 name: `Gay 第${i}页`,
                 ext: {
-                    url: `https://cn.pornhub.com/gay?page=${i}`,
-                    token: token,
-                    page: i
+                    url: `${appConfig.site}/${token}/gayporn?t=${i}&ac=videolist&pg=1`,
+                    token: token
                 },
             });
         }
         return list;
-    } catch (error) {
-        $print('getTabs error: ' + error);
+    } catch (e) {
+        $print('getTabs error: ' + e);
         return [];
     }
 }
@@ -42,21 +40,15 @@ async function getCards(ext) {
     try {
         ext = argsify(ext);
         let cards = [];
-        let url = ext.url;
-        let token = ext.token;
+        let page = ext.page || 1;
+        let url = `https://cn.pornhub.com/gay?page=${page}`;
 
-        const { data } = await $fetch.get(url, {
-            headers: { 'User-Agent': UA }
-        });
-
+        const { data } = await $fetch.get(url, { headers: { 'User-Agent': UA } });
         const doc = new DOMParser().parseFromString(data, 'text/html');
         const items = doc.querySelectorAll('a[data-title]');
-        let count = 0;
 
         items.forEach(a => {
-            if (count >= 24) return; // 每页最多24条
             if (!a.href.includes('viewkey=')) return;
-
             const viewkey = a.href.match(/viewkey=([^&]+)/)?.[1];
             const title = a.getAttribute('title') || 'Gay Video';
             const img = a.querySelector('img');
@@ -70,17 +62,16 @@ async function getCards(ext) {
                     vod_pic: pic.startsWith('http') ? pic : 'https:' + pic,
                     vod_remarks: duration,
                     ext: {
-                        url: a.href,
-                        token: token
+                        url: `${appConfig.site}/${ext.token}/gayporn?ids=${viewkey}`,
+                        token: ext.token
                     },
                 });
-                count++;
             }
         });
 
         return jsonify({ list: cards });
-    } catch (error) {
-        $print('getCards error: ' + error);
+    } catch (e) {
+        $print('getCards error: ' + e);
         return jsonify({ list: [] });
     }
 }
@@ -89,59 +80,44 @@ async function getTracks(ext) {
     try {
         ext = argsify(ext);
         let tracks = [];
-        let url = ext.url;
-        let token = ext.token;
+        let viewkey = ext.url.match(/ids=([^&]+)/)?.[1];
+        if (!viewkey) return jsonify({ list: [] });
 
-        const { data } = await $fetch.get(url, {
-            headers: { 'User-Agent': UA }
-        });
+        let url = `https://cn.pornhub.com/view_video.php?viewkey=${viewkey}`;
+        const { data } = await $fetch.get(url, { headers: { 'User-Agent': UA } });
 
-        const doc = new DOMParser().parseFromString(data, 'text/html');
-        const script = Array.from(doc.scripts).find(s => s.textContent.includes('mediaDefinitions'));
+        const script = Array.from(new DOMParser().parseFromString(data, 'text/html').scripts)
+            .find(s => s.textContent.includes('mediaDefinitions'));
 
         if (script) {
             const match = script.textContent.match(/mediaDefinitions\s*=\s*(\[[\s\S]*?\]);/);
             if (match) {
                 try {
                     const media = JSON.parse(match[1]);
-                    const sorted = media
+                    media
                         .filter(m => m.videoUrl)
                         .sort((a, b) => (b.quality || 0) - (a.quality || 0))
-                        .slice(0, 3); // 取前3个清晰度
-
-                    sorted.forEach(m => {
-                        tracks.push({
-                            name: `${m.quality}p`,
-                            pan: '',
-                            ext: { url: m.videoUrl },
+                        .slice(0, 3)
+                        .forEach(m => {
+                            tracks.push({
+                                name: `${m.quality}p`,
+                                pan: '',
+                                ext: { url: m.videoUrl },
+                            });
                         });
-                    });
-                } catch (e) {
-                    $print('mediaDefinitions parse error: ' + e);
-                }
+                } catch (e) {}
             }
         }
 
-        // 兜底 m3u8
         if (tracks.length === 0) {
-            const m3u8 = data.match(/"defaultVideoUrl":"([^"]+\.m3u8[^"]*)"/);
-            if (m3u8) {
-                tracks.push({
-                    name: 'HLS 720p',
-                    pan: '',
-                    ext: { url: m3u8[1].replace(/\\/g, '') },
-                });
-            }
+            tracks.push({ name: '无源', pan: '', ext: { url: '' } });
         }
 
         return jsonify({
-            list: [{
-                title: '在线',
-                tracks: tracks.length > 0 ? tracks : [{ name: '解析失败', pan: '', ext: { url: '' } }]
-            }]
+            list: [{ title: '在线', tracks }]
         });
-    } catch (error) {
-        $print('getTracks error: ' + error);
+    } catch (e) {
+        $print('getTracks error: ' + e);
         return jsonify({ list: [] });
     }
 }
@@ -149,10 +125,8 @@ async function getTracks(ext) {
 async function getPlayinfo(ext) {
     try {
         ext = argsify(ext);
-        const url = ext.url;
-        return jsonify({ urls: [url] });
-    } catch (error) {
-        $print('getPlayinfo error: ' + error);
+        return jsonify({ urls: [ext.url] });
+    } catch (e) {
         return jsonify({ urls: [] });
     }
 }
@@ -166,10 +140,8 @@ async function search(ext) {
         let page = ext.page || 1;
         if (page >= 2) return jsonify({ list: [] });
 
-        const url = `https://cn.pornhub.com/video/search?search=${text}&gay=1&page=1`;
-        const { data } = await $fetch.get(url, {
-            headers: { 'User-Agent': UA }
-        });
+        let url = `https://cn.pornhub.com/video/search?search=${text}&gay=1&page=1`;
+        const { data } = await $fetch.get(url, { headers: { 'User-Agent': UA } });
 
         const doc = new DOMParser().parseFromString(data, 'text/html');
         const items = doc.querySelectorAll('a[data-title]');
@@ -188,14 +160,17 @@ async function search(ext) {
                     vod_name: title,
                     vod_pic: pic.startsWith('http') ? pic : 'https:' + pic,
                     vod_remarks: duration,
-                    ext: { url: a.href, token: token },
+                    ext: {
+                        url: `${appConfig.site}/${token}/gayporn?ids=${viewkey}`,
+                        token: token
+                    },
                 });
             }
         });
 
         return jsonify({ list: cards });
-    } catch (error) {
-        $print('search error: ' + error);
+    } catch (e) {
+        $print('search error: ' + e);
         return jsonify({ list: [] });
     }
 }
